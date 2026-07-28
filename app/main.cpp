@@ -88,14 +88,17 @@ int main(int argc, char** argv) {
         std::cout << std::left << std::setw(8) << "M"
                   << std::setw(22) << "relative L2 error"
                   << std::setw(14) << "fit [ms]"
-                  << "evaluate [ms]\n";
+                  << std::setw(24) << "reconstruct 256 [ms]"
+                  << "post-process [ms]\n";
         std::cout << std::setprecision(8);
         for (const lph::BenchmarkResult& result : results) {
             std::cout << std::left << std::setw(8)
                       << result.sample_count
                       << std::setw(22) << result.relative_l2_error
                       << std::setw(14) << result.fit_milliseconds
-                      << result.evaluation_milliseconds << '\n';
+                      << std::setw(24)
+                      << result.reconstruction_milliseconds
+                      << result.postprocessing_milliseconds << '\n';
         }
         std::cout << "Wrote " << config.output << '\n';
         return 0;
