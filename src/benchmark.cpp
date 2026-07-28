@@ -15,6 +15,27 @@ namespace lph {
 namespace {
 
 constexpr Complex imaginary_unit{0.0, 1.0};
+constexpr int timing_batches = 5;
+
+template <typename Work>
+double best_average_milliseconds(int repetitions, Work&& work) {
+    double best = std::numeric_limits<double>::infinity();
+    for (int batch = 0; batch < timing_batches; ++batch) {
+        const auto start = std::chrono::steady_clock::now();
+        double checksum = 0.0;
+        for (int repetition = 0; repetition < repetitions; ++repetition) {
+            checksum += work();
+        }
+        const auto end = std::chrono::steady_clock::now();
+        volatile double timing_sink = checksum;
+        (void)timing_sink;
+        const double average =
+            std::chrono::duration<double, std::milli>(end - start).count() /
+            repetitions;
+        best = std::min(best, average);
+    }
+    return best;
+}
 
 Matrix4 kronecker(const std::array<Complex, 4>& left,
                   const std::array<Complex, 4>& right) {
@@ -231,6 +252,25 @@ Matrix4 hermitian_traceless(const Matrix4& matrix) {
     return hermitian;
 }
 
+std::vector<Matrix4> reconstruct_hamiltonians(
+    const std::vector<Matrix4>& coefficients,
+    const std::vector<Matrix4>& derivative_coefficients,
+    const std::vector<double>& evaluation_nodes,
+    double final_time) {
+    std::vector<Matrix4> estimates;
+    estimates.reserve(evaluation_nodes.size());
+    for (const double x : evaluation_nodes) {
+        const Matrix4 estimated_unitary =
+            evaluate_chebyshev(coefficients, x);
+        const Matrix4 derivative_x =
+            evaluate_chebyshev(derivative_coefficients, x);
+        const Matrix4 derivative_t = (2.0 / final_time) * derivative_x;
+        estimates.push_back(hermitian_traceless(
+            imaginary_unit * derivative_t * estimated_unitary.adjoint()));
+    }
+    return estimates;
+}
+
 }  // namespace
 
 Matrix4 Matrix4::identity() {
@@ -430,6 +470,10 @@ run_benchmark(const BenchmarkConfig& config) {
     if (config.sample_counts.empty()) {
         throw std::invalid_argument("at least one sample count is required");
     }
+    if (config.fit_timing_repetitions < 1 ||
+        config.reconstruction_timing_repetitions < 1) {
+        throw std::invalid_argument("timing repetitions must be positive");
+    }
     const auto [quadrature_nodes, quadrature_weights] =
         gauss_legendre_rule(config.quadrature_order);
 
@@ -445,14 +489,42 @@ run_benchmark(const BenchmarkConfig& config) {
         const std::vector<Matrix4> noisy_samples =
             add_noise(exact_samples, config.sigma, config.seed);
 
-        const auto fit_start = std::chrono::steady_clock::now();
+        const double fit_milliseconds = best_average_milliseconds(
+            config.fit_timing_repetitions,
+            [&noisy_samples]() {
+                const std::vector<Matrix4> timed_coefficients =
+                    chebyshev_coefficients(noisy_samples);
+                const std::vector<Matrix4> timed_derivative_coefficients =
+                    differentiate_chebyshev(timed_coefficients);
+                return timed_coefficients.front().frobenius_squared() +
+                       timed_derivative_coefficients.front().
+                           frobenius_squared();
+            });
+
         const std::vector<Matrix4> coefficients =
             chebyshev_coefficients(noisy_samples);
         const std::vector<Matrix4> derivative_coefficients =
             differentiate_chebyshev(coefficients);
-        const auto fit_end = std::chrono::steady_clock::now();
 
-        const auto evaluation_start = std::chrono::steady_clock::now();
+        const double reconstruction_milliseconds = best_average_milliseconds(
+            config.reconstruction_timing_repetitions,
+            [&coefficients,
+             &derivative_coefficients,
+             &quadrature_nodes,
+             &config]() {
+                const std::vector<Matrix4> timed_estimates =
+                    reconstruct_hamiltonians(coefficients,
+                                             derivative_coefficients,
+                                             quadrature_nodes,
+                                             config.final_time);
+                return timed_estimates.back().frobenius_squared();
+            });
+
+        const std::vector<Matrix4> estimated_hamiltonians =
+            reconstruct_hamiltonians(coefficients,
+                                     derivative_coefficients,
+                                     quadrature_nodes,
+                                     config.final_time);
         double numerator = 0.0;
         double denominator = 0.0;
         for (std::size_t index = 0;
@@ -460,35 +532,22 @@ run_benchmark(const BenchmarkConfig& config) {
              ++index) {
             const double x = quadrature_nodes[index];
             const double time = 0.5 * config.final_time * (x + 1.0);
-            const Matrix4 estimated_unitary =
-                evaluate_chebyshev(coefficients, x);
-            const Matrix4 derivative_x =
-                evaluate_chebyshev(derivative_coefficients, x);
-            const Matrix4 derivative_t =
-                (2.0 / config.final_time) * derivative_x;
-            const Matrix4 estimated_hamiltonian = hermitian_traceless(
-                imaginary_unit * derivative_t * estimated_unitary.adjoint());
             const Matrix4 exact_hamiltonian =
                 target_hamiltonian(time, config.final_time);
             numerator += quadrature_weights[index] *
-                         (estimated_hamiltonian -
+                         (estimated_hamiltonians[index] -
                           exact_hamiltonian).frobenius_squared();
             denominator += quadrature_weights[index] *
                            exact_hamiltonian.frobenius_squared();
         }
-        const auto evaluation_end = std::chrono::steady_clock::now();
 
         const double relative_error = std::sqrt(numerator / denominator);
-        const auto fit_duration =
-            std::chrono::duration<double, std::milli>(fit_end - fit_start);
-        const auto evaluation_duration =
-            std::chrono::duration<double, std::milli>(
-                evaluation_end - evaluation_start);
         results.push_back(BenchmarkResult{
             sample_count,
             relative_error,
-            fit_duration.count(),
-            evaluation_duration.count()});
+            fit_milliseconds,
+            reconstruction_milliseconds,
+            fit_milliseconds + reconstruction_milliseconds});
     }
     return results;
 }
@@ -502,7 +561,8 @@ void write_results(const BenchmarkConfig& config,
     if (!output) {
         throw std::runtime_error("could not open output CSV");
     }
-    output << "seed,sigma,M,relative_l2_error,fit_ms,evaluation_ms\n";
+    output << "seed,sigma,M,relative_l2_error,fit_ms,"
+              "reconstruction_256_ms,postprocessing_256_ms\n";
     output << std::setprecision(17);
     for (const BenchmarkResult& result : results) {
         output << config.seed << ','
@@ -510,7 +570,8 @@ void write_results(const BenchmarkConfig& config,
                << result.sample_count << ','
                << result.relative_l2_error << ','
                << result.fit_milliseconds << ','
-               << result.evaluation_milliseconds << '\n';
+               << result.reconstruction_milliseconds << ','
+               << result.postprocessing_milliseconds << '\n';
     }
 }
 
