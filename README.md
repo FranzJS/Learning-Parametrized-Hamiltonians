@@ -33,7 +33,7 @@ $$
 
 The default $\sigma=0.005$ gives 1% RMS relative Frobenius noise for a
 two-qubit unitary. The seed is fixed to `20260727`, and the program reports
-$M\in\{8,12,16\}$.
+$M\in\{3,5,8,16\}$.
 
 The baseline:
 
