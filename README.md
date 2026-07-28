@@ -33,7 +33,7 @@ $$
 
 The default $\sigma=0.005$ gives 1% RMS relative Frobenius noise for a
 two-qubit unitary. The seed is fixed to `20260727`, and the program reports
-$M\in\{3,5,8,16\}$.
+$M\in\{3,5,8,12,16\}$.
 
 The baseline:
 
@@ -58,6 +58,14 @@ $$
 
 evaluated by 256-point Gauss-Legendre quadrature. Both Hamiltonians are
 traceless by construction.
+
+The CSV also reports the classical post-processing runtime. This is the sum
+of (i) computing the Chebyshev coefficients and their derivative and
+(ii) reconstructing $\widehat H(t)$ at all 256 quadrature nodes. Reference
+dynamics, synthetic-noise generation, and ground-truth error accumulation are
+excluded. The sub-millisecond timings are averaged over repeated identical
+operations, taking the best of five timing batches to suppress scheduler
+interruptions.
 
 ## Build and run
 
