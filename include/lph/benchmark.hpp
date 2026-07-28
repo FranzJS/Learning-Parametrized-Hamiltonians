@@ -45,7 +45,9 @@ private:
 
 struct BenchmarkConfig {
     std::vector<int> sample_counts{3, 5, 8, 12, 16};
-    std::vector<double> noise_rates{0.0, 0.001, 0.0025, 0.005, 0.01, 0.02};
+    std::vector<double> noise_rates{
+        0.0, 0.001, 0.0025, 0.005, 0.01, 0.02,
+        0.05, 0.1, 0.2, 0.35, 0.5, 1.0};
     std::uint64_t seed = 20260727ULL;
     double final_time = 2.0;
     double ode_max_step = 1.0e-4;

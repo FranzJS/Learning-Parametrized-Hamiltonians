@@ -32,8 +32,11 @@ $$
 $$
 
 The default sweep uses
-$\sigma\in\{0,0.001,0.0025,0.005,0.01,0.02\}$, corresponding to RMS relative
-Frobenius noise $2\sigma\in\{0,0.2,0.5,1,2,4\}\%$ for a two-qubit unitary.
+$\sigma\in\{0,0.001,0.0025,0.005,0.01,0.02,0.05,0.1,0.2,0.35,0.5,1\}$,
+corresponding to RMS relative Frobenius noise
+$2\sigma\in\{0,0.2,0.5,1,2,4,10,20,40,70,100,200\}\%$ for a two-qubit
+unitary. Rates at and above 40% are deliberately extreme stress tests rather
+than representative tomography noise levels.
 The seed is fixed to `20260727`, and the program reports
 $M\in\{3,5,8,12,16\}$. For fixed $M$, the same Gaussian draw is scaled across
 all noise rates; both learners always receive identical noisy matrices.
@@ -106,6 +109,12 @@ unconstrained / polar-projected:
 | .005 | 1% | .30682 / .30715 | .14956 / .14998 | .05598 / .05535 | .09448 / .09325 | .11693 / .11424 |
 | .01 | 2% | .30725 / .30790 | .15585 / .15632 | .10907 / .10855 | .18859 / .18664 | .23341 / .22839 |
 | .02 | 4% | .30990 / .31125 | .18689 / .18724 | .21533 / .21664 | .37580 / .37378 | .46512 / .45641 |
+| .05 | 10% | .33061 / .33574 | .34399 / .34943 | .52793 / .54592 | .93092 / .93718 | 1.15281 / 1.13751 |
+| .1 | 20% | .39543 / .41586 | .64357 / .67017 | 1.03197 / 1.10543 | 1.84531 / 1.87598 | 2.29132 / 2.25760 |
+| .2 | 40% | .57653 / .64339 | 1.24377 / 1.26714 | 2.02738 / 2.23416 | 3.71704 / 3.68461 | 4.66903 / 4.38978 |
+| .35 | 70% | .90769 / .98882 | 2.20578 / 1.81763 | 3.70946 / 3.68661 | 6.96172 / 5.95628 | 8.97678 / 7.07563 |
+| .5 | 100% | 1.33461 / 1.22433 | 3.40045 / 2.10290 | 5.91736 / 4.27403 | 11.15048 / 7.02437 | 14.74838 / 8.51520 |
+| 1 | 200% | 3.95435 / 1.42825 | 10.40155 / 2.47527 | 19.06890 / 4.43601 | 34.75665 / 7.99427 | 47.91194 / 10.97079 |
 
 Intrinsic learner-construction runtime on the benchmark machine:
 
@@ -117,11 +126,13 @@ Intrinsic learner-construction runtime on the benchmark machine:
 | 12 | 6.477 | 34.068 |
 | 16 | 11.287 | 48.761 |
 
-At $M=3,5$, interpolation bias dominates and projection is slightly
-counterproductive for this realization. It consistently helps at $M=12,16$.
-The intermediate $M=8$ crosses over: projection helps through 2% RMS input
-noise but is slightly worse at 4%. Thus sample-wise unitarity is a useful but
-modest denoising constraint, not a uniformly dominating estimator.
+In the low-noise regime, projection is a modest and nonuniform improvement:
+interpolation bias dominates for small $M$, while differentiation amplifies
+noise for large $M$. At 10--40% RMS noise, projection can still be worse,
+depending on $M$. It becomes decisively useful only in the extreme regime
+where the additive noise is comparable to or larger than the unitary signal.
+Even there the absolute Hamiltonian errors remain large; projection prevents
+the estimator from exploding but does not recover an accurate Hamiltonian.
 
 ## Build and run
 
