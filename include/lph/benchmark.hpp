@@ -43,12 +43,14 @@ private:
 [[nodiscard]] Matrix4 operator*(double scalar, Matrix4 matrix);
 
 struct BenchmarkConfig {
-    std::vector<int> sample_counts{3, 5, 8, 16};
+    std::vector<int> sample_counts{3, 5, 8, 12, 16};
     std::uint64_t seed = 20260727ULL;
     double sigma = 0.005;
     double final_time = 2.0;
     double ode_max_step = 1.0e-4;
     int quadrature_order = 256;
+    int fit_timing_repetitions = 2000;
+    int reconstruction_timing_repetitions = 200;
     std::filesystem::path output =
         "results/chebyshev_baseline.csv";
 };
@@ -57,7 +59,8 @@ struct BenchmarkResult {
     int sample_count = 0;
     double relative_l2_error = 0.0;
     double fit_milliseconds = 0.0;
-    double evaluation_milliseconds = 0.0;
+    double reconstruction_milliseconds = 0.0;
+    double postprocessing_milliseconds = 0.0;
 };
 
 [[nodiscard]] Matrix4 target_hamiltonian(double time,
