@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <string_view>
 #include <vector>
 
 namespace lph {
@@ -52,15 +53,22 @@ struct BenchmarkConfig {
     int fit_timing_repetitions = 2000;
     int reconstruction_timing_repetitions = 200;
     std::filesystem::path output =
-        "results/chebyshev_baseline.csv";
+        "results/chebyshev_unitary_projection.csv";
 };
 
+enum class Algorithm {
+    unconstrained,
+    polar_projected,
+};
+
+[[nodiscard]] std::string_view algorithm_name(Algorithm algorithm);
+
 struct BenchmarkResult {
+    Algorithm algorithm = Algorithm::unconstrained;
     int sample_count = 0;
     double relative_l2_error = 0.0;
-    double fit_milliseconds = 0.0;
+    double learning_milliseconds = 0.0;
     double reconstruction_milliseconds = 0.0;
-    double postprocessing_milliseconds = 0.0;
 };
 
 [[nodiscard]] Matrix4 target_hamiltonian(double time,
@@ -74,6 +82,8 @@ differentiate_chebyshev(const std::vector<Matrix4>& coefficients);
 
 [[nodiscard]] Matrix4
 evaluate_chebyshev(const std::vector<Matrix4>& coefficients, double x);
+
+[[nodiscard]] Matrix4 project_to_unitary(const Matrix4& matrix);
 
 [[nodiscard]] std::vector<BenchmarkResult>
 run_benchmark(const BenchmarkConfig& config);
