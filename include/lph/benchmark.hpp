@@ -43,7 +43,7 @@ private:
 [[nodiscard]] Matrix4 operator*(double scalar, Matrix4 matrix);
 
 struct BenchmarkConfig {
-    std::vector<int> sample_counts{8, 12, 16};
+    std::vector<int> sample_counts{3, 5, 8, 16};
     std::uint64_t seed = 20260727ULL;
     double sigma = 0.005;
     double final_time = 2.0;
