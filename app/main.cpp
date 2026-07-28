@@ -83,22 +83,22 @@ int main(int argc, char** argv) {
         const auto results = lph::run_benchmark(config);
         lph::write_results(config, results);
 
-        std::cout << "Chebyshev baseline: seed=" << config.seed
+        std::cout << "Chebyshev comparison: seed=" << config.seed
                   << ", sigma=" << config.sigma << '\n';
-        std::cout << std::left << std::setw(8) << "M"
+        std::cout << std::left << std::setw(19) << "algorithm"
+                  << std::setw(8) << "M"
                   << std::setw(22) << "relative L2 error"
-                  << std::setw(14) << "fit [ms]"
-                  << std::setw(24) << "reconstruct 256 [ms]"
-                  << "post-process [ms]\n";
+                  << std::setw(18) << "learning [ms]"
+                  << "reconstruct 256 [ms]\n";
         std::cout << std::setprecision(8);
         for (const lph::BenchmarkResult& result : results) {
-            std::cout << std::left << std::setw(8)
+            std::cout << std::left << std::setw(19)
+                      << lph::algorithm_name(result.algorithm)
+                      << std::setw(8)
                       << result.sample_count
                       << std::setw(22) << result.relative_l2_error
-                      << std::setw(14) << result.fit_milliseconds
-                      << std::setw(24)
-                      << result.reconstruction_milliseconds
-                      << result.postprocessing_milliseconds << '\n';
+                      << std::setw(18) << result.learning_milliseconds
+                      << result.reconstruction_milliseconds << '\n';
         }
         std::cout << "Wrote " << config.output << '\n';
         return 0;
