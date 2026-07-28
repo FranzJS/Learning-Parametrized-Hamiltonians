@@ -38,8 +38,7 @@ void print_usage(const char* executable) {
     std::cout
         << "Usage: " << executable << " [options]\n"
         << "  --seed N          Noise seed (default: 20260727)\n"
-        << "  --sigma X         Complex-noise standard deviation "
-           "(default: 0.005)\n"
+        << "  --sigma X         Run one complex-noise standard deviation\n"
         << "  --quadrature N    Gauss-Legendre order (default: 256)\n"
         << "  --ode-step X      Maximum RK4 step (default: 1e-4)\n"
         << "  --output PATH     CSV output path\n"
@@ -66,7 +65,7 @@ int main(int argc, char** argv) {
                 config.seed =
                     parse_integer<std::uint64_t>(value, argument);
             } else if (argument == "--sigma") {
-                config.sigma = parse_double(value, argument);
+                config.noise_rates = {parse_double(value, argument)};
             } else if (argument == "--quadrature") {
                 config.quadrature_order =
                     parse_integer<int>(value, argument);
@@ -83,9 +82,9 @@ int main(int argc, char** argv) {
         const auto results = lph::run_benchmark(config);
         lph::write_results(config, results);
 
-        std::cout << "Chebyshev comparison: seed=" << config.seed
-                  << ", sigma=" << config.sigma << '\n';
+        std::cout << "Chebyshev noise sweep: seed=" << config.seed << '\n';
         std::cout << std::left << std::setw(19) << "algorithm"
+                  << std::setw(12) << "sigma"
                   << std::setw(8) << "M"
                   << std::setw(22) << "relative L2 error"
                   << std::setw(18) << "learning [ms]"
@@ -94,6 +93,7 @@ int main(int argc, char** argv) {
         for (const lph::BenchmarkResult& result : results) {
             std::cout << std::left << std::setw(19)
                       << lph::algorithm_name(result.algorithm)
+                      << std::setw(12) << result.sigma
                       << std::setw(8)
                       << result.sample_count
                       << std::setw(22) << result.relative_l2_error

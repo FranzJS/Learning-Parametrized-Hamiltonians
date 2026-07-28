@@ -588,6 +588,14 @@ run_benchmark(const BenchmarkConfig& config) {
     if (config.sample_counts.empty()) {
         throw std::invalid_argument("at least one sample count is required");
     }
+    if (config.noise_rates.empty()) {
+        throw std::invalid_argument("at least one noise rate is required");
+    }
+    if (std::any_of(config.noise_rates.begin(),
+                    config.noise_rates.end(),
+                    [](double sigma) { return sigma < 0.0; })) {
+        throw std::invalid_argument("noise rates must be nonnegative");
+    }
     if (config.fit_timing_repetitions < 1 ||
         config.reconstruction_timing_repetitions < 1) {
         throw std::invalid_argument("timing repetitions must be positive");
@@ -600,7 +608,9 @@ run_benchmark(const BenchmarkConfig& config) {
         Algorithm::unconstrained,
         Algorithm::polar_projected,
     };
-    results.reserve(config.sample_counts.size() * algorithms.size());
+    results.reserve(config.sample_counts.size() *
+                    config.noise_rates.size() *
+                    algorithms.size());
     for (const int sample_count : config.sample_counts) {
         const std::vector<double> sample_times =
             chebyshev_root_times(sample_count, config.final_time);
@@ -608,64 +618,72 @@ run_benchmark(const BenchmarkConfig& config) {
             exact_unitaries(sample_times,
                             config.final_time,
                             config.ode_max_step);
-        const std::vector<Matrix4> noisy_samples =
-            add_noise(exact_samples, config.sigma, config.seed);
+        for (const double sigma : config.noise_rates) {
+            // Reusing the seed makes the Gaussian perturbation direction
+            // identical across noise rates, so sigma alone controls its scale.
+            const std::vector<Matrix4> noisy_samples =
+                add_noise(exact_samples, sigma, config.seed);
 
-        for (const Algorithm algorithm : algorithms) {
-            const double learning_milliseconds = best_average_milliseconds(
-                config.fit_timing_repetitions,
-                [&noisy_samples, algorithm]() {
-                    const LearnedModel timed_model =
-                        learn(noisy_samples, algorithm);
-                    return timed_model.coefficients.front().
-                               frobenius_squared() +
-                           timed_model.derivative_coefficients.front().
-                               frobenius_squared();
-                });
-
-            const LearnedModel model = learn(noisy_samples, algorithm);
-            const double reconstruction_milliseconds =
-                best_average_milliseconds(
-                    config.reconstruction_timing_repetitions,
-                    [&model, &quadrature_nodes, &config]() {
-                        const std::vector<Matrix4> timed_estimates =
-                            reconstruct_hamiltonians(
-                                model.coefficients,
-                                model.derivative_coefficients,
-                                quadrature_nodes,
-                                config.final_time);
-                        return timed_estimates.back().frobenius_squared();
+            for (const Algorithm algorithm : algorithms) {
+                const double learning_milliseconds =
+                    best_average_milliseconds(
+                        config.fit_timing_repetitions,
+                        [&noisy_samples, algorithm]() {
+                            const LearnedModel timed_model =
+                                learn(noisy_samples, algorithm);
+                            return timed_model.coefficients.front().
+                                       frobenius_squared() +
+                                   timed_model.derivative_coefficients.front().
+                                       frobenius_squared();
                     });
 
-            const std::vector<Matrix4> estimated_hamiltonians =
-                reconstruct_hamiltonians(model.coefficients,
-                                         model.derivative_coefficients,
-                                         quadrature_nodes,
-                                         config.final_time);
-            double numerator = 0.0;
-            double denominator = 0.0;
-            for (std::size_t index = 0;
-                 index < quadrature_nodes.size();
-                 ++index) {
-                const double x = quadrature_nodes[index];
-                const double time =
-                    0.5 * config.final_time * (x + 1.0);
-                const Matrix4 exact_hamiltonian =
-                    target_hamiltonian(time, config.final_time);
-                numerator +=
-                    quadrature_weights[index] *
-                    (estimated_hamiltonians[index] -
-                     exact_hamiltonian).frobenius_squared();
-                denominator += quadrature_weights[index] *
-                               exact_hamiltonian.frobenius_squared();
-            }
+                const LearnedModel model = learn(noisy_samples, algorithm);
+                const double reconstruction_milliseconds =
+                    best_average_milliseconds(
+                        config.reconstruction_timing_repetitions,
+                        [&model, &quadrature_nodes, &config]() {
+                            const std::vector<Matrix4> timed_estimates =
+                                reconstruct_hamiltonians(
+                                    model.coefficients,
+                                    model.derivative_coefficients,
+                                    quadrature_nodes,
+                                    config.final_time);
+                            return timed_estimates.back().
+                                   frobenius_squared();
+                        });
 
-            results.push_back(BenchmarkResult{
-                algorithm,
-                sample_count,
-                std::sqrt(numerator / denominator),
-                learning_milliseconds,
-                reconstruction_milliseconds});
+                const std::vector<Matrix4> estimated_hamiltonians =
+                    reconstruct_hamiltonians(
+                        model.coefficients,
+                        model.derivative_coefficients,
+                        quadrature_nodes,
+                        config.final_time);
+                double numerator = 0.0;
+                double denominator = 0.0;
+                for (std::size_t index = 0;
+                     index < quadrature_nodes.size();
+                     ++index) {
+                    const double x = quadrature_nodes[index];
+                    const double time =
+                        0.5 * config.final_time * (x + 1.0);
+                    const Matrix4 exact_hamiltonian =
+                        target_hamiltonian(time, config.final_time);
+                    numerator +=
+                        quadrature_weights[index] *
+                        (estimated_hamiltonians[index] -
+                         exact_hamiltonian).frobenius_squared();
+                    denominator += quadrature_weights[index] *
+                                   exact_hamiltonian.frobenius_squared();
+                }
+
+                results.push_back(BenchmarkResult{
+                    algorithm,
+                    sample_count,
+                    sigma,
+                    std::sqrt(numerator / denominator),
+                    learning_milliseconds,
+                    reconstruction_milliseconds});
+            }
         }
     }
     return results;
@@ -685,7 +703,7 @@ void write_results(const BenchmarkConfig& config,
     output << std::setprecision(17);
     for (const BenchmarkResult& result : results) {
         output << config.seed << ','
-               << config.sigma << ','
+               << result.sigma << ','
                << algorithm_name(result.algorithm) << ','
                << result.sample_count << ','
                << result.relative_l2_error << ','

@@ -31,9 +31,12 @@ $$
 (N_j)_{kl}\sim\mathcal{CN}(0,\sigma^2).
 $$
 
-The default $\sigma=0.005$ gives 1% RMS relative Frobenius noise for a
-two-qubit unitary. The seed is fixed to `20260727`, and the program reports
-$M\in\{3,5,8,12,16\}$.
+The default sweep uses
+$\sigma\in\{0,0.001,0.0025,0.005,0.01,0.02\}$, corresponding to RMS relative
+Frobenius noise $2\sigma\in\{0,0.2,0.5,1,2,4\}\%$ for a two-qubit unitary.
+The seed is fixed to `20260727`, and the program reports
+$M\in\{3,5,8,12,16\}$. For fixed $M$, the same Gaussian draw is scaled across
+all noise rates; both learners always receive identical noisy matrices.
 
 Both algorithms:
 
@@ -92,15 +95,17 @@ interruptions.
 
 ## Fixed-seed results
 
-Accuracy for seed `20260727` and $\sigma=0.005$:
+Accuracy for seed `20260727`. Each entry is
+unconstrained / polar-projected:
 
-| $M$ | Unconstrained $E_H$ | Polar-projected $E_H$ |
-|---:|---:|---:|
-| 3 | 0.30682 | 0.30715 |
-| 5 | 0.14956 | 0.14998 |
-| 8 | 0.05598 | 0.05535 |
-| 12 | 0.09448 | 0.09325 |
-| 16 | 0.11693 | 0.11424 |
+| $\sigma$ | RMS noise | $M=3$ | $M=5$ | $M=8$ | $M=12$ | $M=16$ |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0 | 0% | .30701 / .30701 | .15090 / .15090 | .01292 / .01292 | .00016 / .00016 | .00001 / .00001 |
+| .001 | .2% | .30692 / .30699 | .15000 / .15013 | .01707 / .01684 | .01892 / .01864 | .02342 / .02285 |
+| .0025 | .5% | .30684 / .30700 | .14925 / .14952 | .03032 / .02986 | .04728 / .04661 | .05853 / .05713 |
+| .005 | 1% | .30682 / .30715 | .14956 / .14998 | .05598 / .05535 | .09448 / .09325 | .11693 / .11424 |
+| .01 | 2% | .30725 / .30790 | .15585 / .15632 | .10907 / .10855 | .18859 / .18664 | .23341 / .22839 |
+| .02 | 4% | .30990 / .31125 | .18689 / .18724 | .21533 / .21664 | .37580 / .37378 | .46512 / .45641 |
 
 Intrinsic learner-construction runtime on the benchmark machine:
 
@@ -112,10 +117,11 @@ Intrinsic learner-construction runtime on the benchmark machine:
 | 12 | 6.477 | 34.068 |
 | 16 | 11.287 | 48.761 |
 
-At $M=3,5$, interpolation bias dominates and the projection is slightly
-counterproductive for this realization. It becomes beneficial once noisy
-higher Chebyshev modes matter. At $M=16$, it lowers the error by about 2.3%,
-while remaining negligible in absolute runtime.
+At $M=3,5$, interpolation bias dominates and projection is slightly
+counterproductive for this realization. It consistently helps at $M=12,16$.
+The intermediate $M=8$ crosses over: projection helps through 2% RMS input
+noise but is slightly worse at 4%. Thus sample-wise unitarity is a useful but
+modest denoising constraint, not a uniformly dominating estimator.
 
 ## Build and run
 
@@ -128,5 +134,6 @@ ctest --test-dir build --output-on-failure
 ./build/lph_benchmark
 ```
 
-The default run writes `results/chebyshev_unitary_projection.csv`. Use
-`--help` to see the available reproducibility and accuracy options.
+The default run writes `results/chebyshev_noise_sweep.csv`. Passing
+`--sigma X` restricts the run to one noise rate. Use `--help` to see the
+remaining reproducibility and accuracy options.

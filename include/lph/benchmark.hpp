@@ -45,15 +45,15 @@ private:
 
 struct BenchmarkConfig {
     std::vector<int> sample_counts{3, 5, 8, 12, 16};
+    std::vector<double> noise_rates{0.0, 0.001, 0.0025, 0.005, 0.01, 0.02};
     std::uint64_t seed = 20260727ULL;
-    double sigma = 0.005;
     double final_time = 2.0;
     double ode_max_step = 1.0e-4;
     int quadrature_order = 256;
     int fit_timing_repetitions = 2000;
     int reconstruction_timing_repetitions = 200;
     std::filesystem::path output =
-        "results/chebyshev_unitary_projection.csv";
+        "results/chebyshev_noise_sweep.csv";
 };
 
 enum class Algorithm {
@@ -66,6 +66,7 @@ enum class Algorithm {
 struct BenchmarkResult {
     Algorithm algorithm = Algorithm::unconstrained;
     int sample_count = 0;
+    double sigma = 0.0;
     double relative_l2_error = 0.0;
     double learning_milliseconds = 0.0;
     double reconstruction_milliseconds = 0.0;

@@ -82,7 +82,7 @@ void test_unitary_projection() {
 void test_noiseless_convergence() {
     lph::BenchmarkConfig config;
     config.sample_counts = {12, 24};
-    config.sigma = 0.0;
+    config.noise_rates = {0.0};
     config.quadrature_order = 128;
     const auto results = lph::run_benchmark(config);
     require(results.size() == 4, "unexpected benchmark result count");
@@ -98,6 +98,20 @@ void test_noiseless_convergence() {
             "polar projection changed the noiseless result");
 }
 
+void test_noise_sweep_shape() {
+    lph::BenchmarkConfig config;
+    config.sample_counts = {3};
+    config.noise_rates = {0.0, 0.01};
+    config.quadrature_order = 32;
+    config.fit_timing_repetitions = 1;
+    config.reconstruction_timing_repetitions = 1;
+    const auto results = lph::run_benchmark(config);
+    require(results.size() == 4, "unexpected noise-sweep result count");
+    require(results[0].sigma == 0.0 && results[1].sigma == 0.0 &&
+                results[2].sigma == 0.01 && results[3].sigma == 0.01,
+            "unexpected noise-sweep result order");
+}
+
 }  // namespace
 
 int main() {
@@ -106,6 +120,7 @@ int main() {
         test_chebyshev_interpolation_and_derivative();
         test_unitary_projection();
         test_noiseless_convergence();
+        test_noise_sweep_shape();
         std::cout << "All tests passed\n";
         return 0;
     } catch (const std::exception& exception) {
