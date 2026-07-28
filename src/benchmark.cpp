@@ -16,6 +16,8 @@ namespace {
 
 constexpr Complex imaginary_unit{0.0, 1.0};
 constexpr int timing_batches = 5;
+constexpr int polar_max_iterations = 20;
+constexpr double polar_relative_tolerance_squared = 1.0e-28;
 
 template <typename Work>
 double best_average_milliseconds(int repetitions, Work&& work) {
@@ -252,6 +254,92 @@ Matrix4 hermitian_traceless(const Matrix4& matrix) {
     return hermitian;
 }
 
+Matrix4 inverse(const Matrix4& matrix) {
+    Matrix4 left = matrix;
+    Matrix4 right = Matrix4::identity();
+    double scale = 0.0;
+    for (std::size_t row = 0; row < Matrix4::dimension; ++row) {
+        for (std::size_t column = 0; column < Matrix4::dimension; ++column) {
+            scale = std::max(scale, std::abs(left(row, column)));
+        }
+    }
+    if (scale == 0.0) {
+        throw std::runtime_error("unitary projection received a singular matrix");
+    }
+
+    for (std::size_t column = 0; column < Matrix4::dimension; ++column) {
+        std::size_t pivot = column;
+        double pivot_magnitude = std::abs(left(column, column));
+        for (std::size_t row = column + 1;
+             row < Matrix4::dimension;
+             ++row) {
+            const double candidate = std::abs(left(row, column));
+            if (candidate > pivot_magnitude) {
+                pivot = row;
+                pivot_magnitude = candidate;
+            }
+        }
+        if (pivot_magnitude <=
+            32.0 * std::numeric_limits<double>::epsilon() * scale) {
+            throw std::runtime_error(
+                "unitary projection received a numerically singular matrix");
+        }
+        if (pivot != column) {
+            for (std::size_t entry = 0;
+                 entry < Matrix4::dimension;
+                 ++entry) {
+                std::swap(left(column, entry), left(pivot, entry));
+                std::swap(right(column, entry), right(pivot, entry));
+            }
+        }
+
+        const Complex diagonal = left(column, column);
+        for (std::size_t entry = 0;
+             entry < Matrix4::dimension;
+             ++entry) {
+            left(column, entry) /= diagonal;
+            right(column, entry) /= diagonal;
+        }
+        for (std::size_t row = 0; row < Matrix4::dimension; ++row) {
+            if (row == column) {
+                continue;
+            }
+            const Complex factor = left(row, column);
+            for (std::size_t entry = 0;
+                 entry < Matrix4::dimension;
+                 ++entry) {
+                left(row, entry) -= factor * left(column, entry);
+                right(row, entry) -= factor * right(column, entry);
+            }
+        }
+    }
+    return right;
+}
+
+struct LearnedModel {
+    std::vector<Matrix4> coefficients;
+    std::vector<Matrix4> derivative_coefficients;
+};
+
+LearnedModel learn(const std::vector<Matrix4>& noisy_samples,
+                   Algorithm algorithm) {
+    std::vector<Matrix4> projected_samples;
+    const std::vector<Matrix4>* samples = &noisy_samples;
+    if (algorithm == Algorithm::polar_projected) {
+        projected_samples.reserve(noisy_samples.size());
+        for (const Matrix4& noisy_sample : noisy_samples) {
+            projected_samples.push_back(project_to_unitary(noisy_sample));
+        }
+        samples = &projected_samples;
+    }
+
+    LearnedModel model;
+    model.coefficients = chebyshev_coefficients(*samples);
+    model.derivative_coefficients =
+        differentiate_chebyshev(model.coefficients);
+    return model;
+}
+
 std::vector<Matrix4> reconstruct_hamiltonians(
     const std::vector<Matrix4>& coefficients,
     const std::vector<Matrix4>& derivative_coefficients,
@@ -465,6 +553,36 @@ Matrix4 evaluate_chebyshev(const std::vector<Matrix4>& coefficients,
     return result;
 }
 
+Matrix4 project_to_unitary(const Matrix4& matrix) {
+    Matrix4 iterate = matrix;
+    for (int iteration = 0;
+         iteration < polar_max_iterations;
+         ++iteration) {
+        const Matrix4 next =
+            0.5 * (iterate + inverse(iterate).adjoint());
+        const double difference_squared =
+            (next - iterate).frobenius_squared();
+        const double iterate_scale_squared =
+            std::max(1.0, next.frobenius_squared());
+        iterate = next;
+        if (difference_squared <=
+            polar_relative_tolerance_squared * iterate_scale_squared) {
+            return iterate;
+        }
+    }
+    throw std::runtime_error("unitary polar iteration did not converge");
+}
+
+std::string_view algorithm_name(Algorithm algorithm) {
+    switch (algorithm) {
+        case Algorithm::unconstrained:
+            return "unconstrained";
+        case Algorithm::polar_projected:
+            return "polar_projected";
+    }
+    throw std::invalid_argument("unknown algorithm");
+}
+
 std::vector<BenchmarkResult>
 run_benchmark(const BenchmarkConfig& config) {
     if (config.sample_counts.empty()) {
@@ -478,7 +596,11 @@ run_benchmark(const BenchmarkConfig& config) {
         gauss_legendre_rule(config.quadrature_order);
 
     std::vector<BenchmarkResult> results;
-    results.reserve(config.sample_counts.size());
+    constexpr std::array algorithms{
+        Algorithm::unconstrained,
+        Algorithm::polar_projected,
+    };
+    results.reserve(config.sample_counts.size() * algorithms.size());
     for (const int sample_count : config.sample_counts) {
         const std::vector<double> sample_times =
             chebyshev_root_times(sample_count, config.final_time);
@@ -489,65 +611,62 @@ run_benchmark(const BenchmarkConfig& config) {
         const std::vector<Matrix4> noisy_samples =
             add_noise(exact_samples, config.sigma, config.seed);
 
-        const double fit_milliseconds = best_average_milliseconds(
-            config.fit_timing_repetitions,
-            [&noisy_samples]() {
-                const std::vector<Matrix4> timed_coefficients =
-                    chebyshev_coefficients(noisy_samples);
-                const std::vector<Matrix4> timed_derivative_coefficients =
-                    differentiate_chebyshev(timed_coefficients);
-                return timed_coefficients.front().frobenius_squared() +
-                       timed_derivative_coefficients.front().
-                           frobenius_squared();
-            });
+        for (const Algorithm algorithm : algorithms) {
+            const double learning_milliseconds = best_average_milliseconds(
+                config.fit_timing_repetitions,
+                [&noisy_samples, algorithm]() {
+                    const LearnedModel timed_model =
+                        learn(noisy_samples, algorithm);
+                    return timed_model.coefficients.front().
+                               frobenius_squared() +
+                           timed_model.derivative_coefficients.front().
+                               frobenius_squared();
+                });
 
-        const std::vector<Matrix4> coefficients =
-            chebyshev_coefficients(noisy_samples);
-        const std::vector<Matrix4> derivative_coefficients =
-            differentiate_chebyshev(coefficients);
+            const LearnedModel model = learn(noisy_samples, algorithm);
+            const double reconstruction_milliseconds =
+                best_average_milliseconds(
+                    config.reconstruction_timing_repetitions,
+                    [&model, &quadrature_nodes, &config]() {
+                        const std::vector<Matrix4> timed_estimates =
+                            reconstruct_hamiltonians(
+                                model.coefficients,
+                                model.derivative_coefficients,
+                                quadrature_nodes,
+                                config.final_time);
+                        return timed_estimates.back().frobenius_squared();
+                    });
 
-        const double reconstruction_milliseconds = best_average_milliseconds(
-            config.reconstruction_timing_repetitions,
-            [&coefficients,
-             &derivative_coefficients,
-             &quadrature_nodes,
-             &config]() {
-                const std::vector<Matrix4> timed_estimates =
-                    reconstruct_hamiltonians(coefficients,
-                                             derivative_coefficients,
-                                             quadrature_nodes,
-                                             config.final_time);
-                return timed_estimates.back().frobenius_squared();
-            });
+            const std::vector<Matrix4> estimated_hamiltonians =
+                reconstruct_hamiltonians(model.coefficients,
+                                         model.derivative_coefficients,
+                                         quadrature_nodes,
+                                         config.final_time);
+            double numerator = 0.0;
+            double denominator = 0.0;
+            for (std::size_t index = 0;
+                 index < quadrature_nodes.size();
+                 ++index) {
+                const double x = quadrature_nodes[index];
+                const double time =
+                    0.5 * config.final_time * (x + 1.0);
+                const Matrix4 exact_hamiltonian =
+                    target_hamiltonian(time, config.final_time);
+                numerator +=
+                    quadrature_weights[index] *
+                    (estimated_hamiltonians[index] -
+                     exact_hamiltonian).frobenius_squared();
+                denominator += quadrature_weights[index] *
+                               exact_hamiltonian.frobenius_squared();
+            }
 
-        const std::vector<Matrix4> estimated_hamiltonians =
-            reconstruct_hamiltonians(coefficients,
-                                     derivative_coefficients,
-                                     quadrature_nodes,
-                                     config.final_time);
-        double numerator = 0.0;
-        double denominator = 0.0;
-        for (std::size_t index = 0;
-             index < quadrature_nodes.size();
-             ++index) {
-            const double x = quadrature_nodes[index];
-            const double time = 0.5 * config.final_time * (x + 1.0);
-            const Matrix4 exact_hamiltonian =
-                target_hamiltonian(time, config.final_time);
-            numerator += quadrature_weights[index] *
-                         (estimated_hamiltonians[index] -
-                          exact_hamiltonian).frobenius_squared();
-            denominator += quadrature_weights[index] *
-                           exact_hamiltonian.frobenius_squared();
+            results.push_back(BenchmarkResult{
+                algorithm,
+                sample_count,
+                std::sqrt(numerator / denominator),
+                learning_milliseconds,
+                reconstruction_milliseconds});
         }
-
-        const double relative_error = std::sqrt(numerator / denominator);
-        results.push_back(BenchmarkResult{
-            sample_count,
-            relative_error,
-            fit_milliseconds,
-            reconstruction_milliseconds,
-            fit_milliseconds + reconstruction_milliseconds});
     }
     return results;
 }
@@ -561,17 +680,17 @@ void write_results(const BenchmarkConfig& config,
     if (!output) {
         throw std::runtime_error("could not open output CSV");
     }
-    output << "seed,sigma,M,relative_l2_error,fit_ms,"
-              "reconstruction_256_ms,postprocessing_256_ms\n";
+    output << "seed,sigma,algorithm,M,relative_l2_error,"
+              "learning_ms,reconstruction_256_ms\n";
     output << std::setprecision(17);
     for (const BenchmarkResult& result : results) {
         output << config.seed << ','
                << config.sigma << ','
+               << algorithm_name(result.algorithm) << ','
                << result.sample_count << ','
                << result.relative_l2_error << ','
-               << result.fit_milliseconds << ','
-               << result.reconstruction_milliseconds << ','
-               << result.postprocessing_milliseconds << '\n';
+               << result.learning_milliseconds << ','
+               << result.reconstruction_milliseconds << '\n';
     }
 }
 
