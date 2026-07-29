@@ -22,6 +22,15 @@ endif()
 add_executable(lph_benchmark app/main.cpp)
 target_link_libraries(lph_benchmark PRIVATE lph)
 
+add_executable(lph_four_qubit_benchmark app/four_qubit.cpp)
+target_compile_features(lph_four_qubit_benchmark PRIVATE cxx_std_20)
+target_compile_options(lph_four_qubit_benchmark PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-O3;-Wall;-Wextra;-Wpedantic>
+)
+if(LPH_ENABLE_NATIVE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(lph_four_qubit_benchmark PRIVATE -march=native)
+endif()
+
 include(CTest)
 if(BUILD_TESTING)
     add_executable(lph_tests tests/test_benchmark.cpp)

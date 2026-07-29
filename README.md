@@ -134,6 +134,73 @@ where the additive noise is comparable to or larger than the unitary signal.
 Even there the absolute Hamiltonian errors remain large; projection prevents
 the estimator from exploding but does not recover an accurate Hamiltonian.
 
+## Four-qubit benchmark
+
+The connected four-qubit extension is
+
+$$
+\begin{aligned}
+H_4(t)={}&a(x)(Z_1+Z_3)+b(x)(X_2+X_4)\\
+&+c(x)(Y_1Z_2+Y_3Z_4)\\
+&+\frac{d(x)}{\sqrt3}
+\left(X_2X_3+Y_2Y_3+Z_2Z_3\right),
+\end{aligned}
+$$
+
+where $a,b,c$ are unchanged and
+
+$$
+d(x)=0.35-0.15T_2(x)+0.10T_4(x).
+$$
+
+The bridge between qubits 2 and 3 makes the dynamics nonfactorizing while
+preserving nearest-neighbour 2-locality. The four-qubit sweep uses relative
+RMS Frobenius noise
+
+$$
+r=\sqrt{\frac{\mathbb E\lVert N\rVert_F^2}{\lVert U\rVert_F^2}}
+\in\{0.5,1,2,3\}\%,
+\qquad \sigma=\frac r{\sqrt{16}}=\frac r4.
+$$
+
+Accuracy for seed `20260727`; each entry is
+unconstrained / polar-projected:
+
+| Relative noise | $M=3$ | $M=5$ | $M=8$ | $M=12$ | $M=16$ |
+|---:|---:|---:|---:|---:|---:|
+| 0.5% | .48909 / .48932 | .21093 / .21068 | .03141 / .03122 | .03183 / .03123 | .04315 / .04242 |
+| 1% | .48891 / .48935 | .21184 / .21125 | .04503 / .04420 | .06360 / .06237 | .08630 / .08483 |
+| 2% | .48874 / .48953 | .21520 / .21366 | .07859 / .07638 | .12719 / .12463 | .17261 / .16959 |
+| 3% | .48882 / .48988 | .22052 / .21773 | .11436 / .11080 | .19082 / .18683 | .25897 / .25429 |
+
+Intrinsic post-processing runtime in microseconds; each entry is
+unconstrained / polar-projected:
+
+| Relative noise | $M=3$ | $M=5$ | $M=8$ | $M=12$ | $M=16$ |
+|---:|---:|---:|---:|---:|---:|
+| 0.5% | 6.31 / 179.88 | 14.58 / 305.18 | 33.76 / 504.38 | 69.37 / 784.56 | 120.09 / 1079.98 |
+| 1% | 6.31 / 179.93 | 14.62 / 305.13 | 33.83 / 504.55 | 69.43 / 783.77 | 120.60 / 1090.73 |
+| 2% | 6.31 / 179.99 | 14.60 / 305.21 | 33.49 / 503.60 | 69.19 / 783.98 | 120.22 / 1079.01 |
+| 3% | 6.31 / 223.35 | 14.59 / 350.00 | 33.82 / 577.01 | 69.10 / 870.70 | 119.72 / 1223.79 |
+
+Synthetic data generation includes RK4 evolution to all query times and
+addition of the Gaussian noise. It is shared by both algorithms and does not
+depend materially on the noise rate:
+
+| $M$ | Data generation [ms] |
+|---:|---:|
+| 3 | 147.85 |
+| 5 | 151.10 |
+| 8 | 156.74 |
+| 12 | 157.47 |
+| 16 | 156.56 |
+
+The post-processing time excludes reconstruction on the quadrature nodes used
+only to evaluate the error. The data-generation implementation exploits the
+sparse Pauli form of $H_4(t)$; its absolute runtime is machine-dependent.
+Halving the RK4 step from $2\cdot10^{-4}$ to $10^{-4}$ changes every reported
+error by at most $1.34\cdot10^{-14}$.
+
 ## Build and run
 
 The implementation is dependency-free apart from a C++20 compiler and CMake.
@@ -143,8 +210,10 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ./build/lph_benchmark
+./build/lph_four_qubit_benchmark
 ```
 
 The default run writes `results/chebyshev_noise_sweep.csv`. Passing
 `--sigma X` restricts the run to one noise rate. Use `--help` to see the
-remaining reproducibility and accuracy options.
+remaining reproducibility and accuracy options. The four-qubit executable
+writes `results/four_qubit_noise_sweep.csv`.
