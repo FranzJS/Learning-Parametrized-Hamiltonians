@@ -386,6 +386,40 @@ add_noise(const std::vector<Matrix>& exact_values,
     throw std::runtime_error("unitary polar iteration did not converge");
 }
 
+[[nodiscard]] std::pair<Matrix, Matrix>
+project_to_unitary_with_derivative(const Matrix& matrix,
+                                   const Matrix& derivative) {
+    Matrix iterate = matrix;
+    Matrix derivative_iterate = derivative;
+    for (int iteration = 0; iteration < polar_max_iterations; ++iteration) {
+        const Matrix inverse_adjoint = inverse(iterate).adjoint();
+        const Matrix next = 0.5 * (iterate + inverse_adjoint);
+        const Matrix derivative_next =
+            0.5 * (derivative_iterate -
+                   inverse_adjoint * derivative_iterate.adjoint() *
+                       inverse_adjoint);
+        const double difference_squared =
+            (next - iterate).frobenius_squared();
+        const double derivative_difference_squared =
+            (derivative_next - derivative_iterate).frobenius_squared();
+        const double iterate_scale_squared =
+            std::max(1.0, next.frobenius_squared());
+        const double derivative_scale_squared =
+            std::max(1.0, derivative_next.frobenius_squared());
+        iterate = next;
+        derivative_iterate = derivative_next;
+        if (difference_squared <=
+                polar_relative_tolerance_squared * iterate_scale_squared &&
+            derivative_difference_squared <=
+                polar_relative_tolerance_squared *
+                    derivative_scale_squared) {
+            return {iterate, derivative_iterate};
+        }
+    }
+    throw std::runtime_error(
+        "differentiated unitary polar iteration did not converge");
+}
+
 [[nodiscard]] std::vector<Matrix>
 chebyshev_coefficients(const std::vector<Matrix>& values) {
     const int sample_count = static_cast<int>(values.size());
@@ -461,15 +495,23 @@ evaluate_chebyshev(const std::vector<Matrix>& coefficients, double x) {
 enum class Algorithm {
     unconstrained,
     polar_projected,
+    unitary_curve,
 };
 
 [[nodiscard]] std::string_view algorithm_name(Algorithm algorithm) {
-    return algorithm == Algorithm::unconstrained
-               ? "unconstrained"
-               : "polar_projected";
+    switch (algorithm) {
+        case Algorithm::unconstrained:
+            return "unconstrained";
+        case Algorithm::polar_projected:
+            return "polar_projected";
+        case Algorithm::unitary_curve:
+            return "unitary_curve";
+    }
+    throw std::invalid_argument("unknown algorithm");
 }
 
 struct LearnedModel {
+    Algorithm algorithm = Algorithm::unconstrained;
     std::vector<Matrix> coefficients;
     std::vector<Matrix> derivative_coefficients;
 };
@@ -478,7 +520,8 @@ struct LearnedModel {
                                  Algorithm algorithm) {
     std::vector<Matrix> projected_samples;
     const std::vector<Matrix>* samples = &noisy_samples;
-    if (algorithm == Algorithm::polar_projected) {
+    if (algorithm == Algorithm::polar_projected ||
+        algorithm == Algorithm::unitary_curve) {
         projected_samples.reserve(noisy_samples.size());
         for (const Matrix& sample : noisy_samples) {
             projected_samples.push_back(project_to_unitary(sample));
@@ -486,6 +529,7 @@ struct LearnedModel {
         samples = &projected_samples;
     }
     LearnedModel model;
+    model.algorithm = algorithm;
     model.coefficients = chebyshev_coefficients(*samples);
     model.derivative_coefficients =
         differentiate_chebyshev(model.coefficients);
@@ -500,8 +544,83 @@ struct LearnedModel {
     const Matrix derivative_x =
         evaluate_chebyshev(model.derivative_coefficients, x);
     const Matrix derivative_t = (2.0 / final_time) * derivative_x;
+    if (model.algorithm == Algorithm::unitary_curve) {
+        const auto [unitary, derivative_unitary] =
+            project_to_unitary_with_derivative(estimated_unitary,
+                                               derivative_t);
+        return hermitian_traceless(
+            imaginary_unit * derivative_unitary * unitary.adjoint());
+    }
     return hermitian_traceless(
         imaginary_unit * derivative_t * estimated_unitary.adjoint());
+}
+
+[[nodiscard]] double reconstruct_grid_checksum(
+    const LearnedModel& model,
+    const std::vector<double>& nodes,
+    double final_time) {
+    double checksum = 0.0;
+    for (const double x : nodes) {
+        checksum +=
+            reconstruct_hamiltonian(model, x, final_time).
+                frobenius_squared();
+    }
+    return checksum;
+}
+
+void validate_unitary_curve(const LearnedModel& model,
+                            double final_time) {
+    constexpr int validation_intervals = 1024;
+    for (int index = 0; index <= validation_intervals; ++index) {
+        const double x =
+            -1.0 + 2.0 * static_cast<double>(index) /
+                       static_cast<double>(validation_intervals);
+        const Matrix polynomial =
+            evaluate_chebyshev(model.coefficients, x);
+        const Matrix derivative_x =
+            evaluate_chebyshev(model.derivative_coefficients, x);
+        const auto [unitary, derivative_unitary] =
+            project_to_unitary_with_derivative(
+                polynomial, (2.0 / final_time) * derivative_x);
+        if ((unitary.adjoint() * unitary -
+             Matrix::identity()).frobenius_squared() > 1.0e-24) {
+            throw std::runtime_error(
+                "unitary curve failed dense-grid unitarity validation");
+        }
+        const Matrix tangent_residual =
+            unitary.adjoint() * derivative_unitary +
+            derivative_unitary.adjoint() * unitary;
+        if (tangent_residual.frobenius_squared() > 1.0e-22) {
+            throw std::runtime_error(
+                "unitary curve derivative failed dense-grid tangent validation");
+        }
+    }
+
+    constexpr double validation_x = 0.137;
+    constexpr double difference_step = 1.0e-5;
+    const Matrix polynomial =
+        evaluate_chebyshev(model.coefficients, validation_x);
+    const Matrix derivative_x =
+        evaluate_chebyshev(model.derivative_coefficients, validation_x);
+    const auto [unitary, derivative_unitary] =
+        project_to_unitary_with_derivative(
+            polynomial, (2.0 / final_time) * derivative_x);
+    (void)unitary;
+    const Matrix plus = project_to_unitary(
+        evaluate_chebyshev(model.coefficients,
+                           validation_x + difference_step));
+    const Matrix minus = project_to_unitary(
+        evaluate_chebyshev(model.coefficients,
+                           validation_x - difference_step));
+    const Matrix finite_difference =
+        (1.0 / (difference_step * final_time)) * (plus - minus);
+    const double relative_difference_squared =
+        (finite_difference - derivative_unitary).frobenius_squared() /
+        std::max(1.0, derivative_unitary.frobenius_squared());
+    if (relative_difference_squared > 1.0e-16) {
+        throw std::runtime_error(
+            "differentiated polar iteration failed finite-difference validation");
+    }
 }
 
 [[nodiscard]] std::pair<std::vector<double>, std::vector<double>>
@@ -572,7 +691,8 @@ struct Result {
     int sample_count = 0;
     Algorithm algorithm = Algorithm::unconstrained;
     double relative_l2_error = 0.0;
-    double postprocessing_milliseconds = 0.0;
+    double fit_milliseconds = 0.0;
+    double evaluation_256_milliseconds = 0.0;
     double data_generation_milliseconds = 0.0;
 };
 
@@ -585,6 +705,7 @@ struct Result {
     constexpr std::array algorithms{
         Algorithm::unconstrained,
         Algorithm::polar_projected,
+        Algorithm::unitary_curve,
     };
     const auto [nodes, weights] = gauss_legendre_rule(quadrature_order);
     const Matrix check_hamiltonian =
@@ -632,10 +753,10 @@ struct Result {
                     "polar projection failed unitarity validation");
             }
             for (const Algorithm algorithm : algorithms) {
-                const int repetitions =
+                const int fit_repetitions =
                     algorithm == Algorithm::unconstrained ? 100 : 10;
-                const double postprocessing_ms =
-                    best_average_milliseconds(repetitions, [&]() {
+                const double fit_ms =
+                    best_average_milliseconds(fit_repetitions, [&]() {
                         const LearnedModel model =
                             learn(noisy_samples, algorithm);
                         return model.coefficients.front().frobenius_squared() +
@@ -643,6 +764,18 @@ struct Result {
                                    frobenius_squared();
                     });
                 const LearnedModel model = learn(noisy_samples, algorithm);
+                const int evaluation_repetitions =
+                    algorithm == Algorithm::unitary_curve ? 3 : 10;
+                const double evaluation_256_ms =
+                    best_average_milliseconds(
+                        evaluation_repetitions,
+                        [&]() {
+                            return reconstruct_grid_checksum(
+                                model, nodes, final_time);
+                        });
+                if (algorithm == Algorithm::unitary_curve) {
+                    validate_unitary_curve(model, final_time);
+                }
                 double numerator = 0.0;
                 double denominator = 0.0;
                 for (std::size_t index = 0; index < nodes.size(); ++index) {
@@ -663,7 +796,8 @@ struct Result {
                     sample_count,
                     algorithm,
                     std::sqrt(numerator / denominator),
-                    postprocessing_ms,
+                    fit_ms,
+                    evaluation_256_ms,
                     data_generation_ms,
                 });
             }
@@ -680,7 +814,8 @@ void write_results(const std::vector<Result>& results,
         throw std::runtime_error("could not open result CSV");
     }
     output << "seed,qubits,relative_rms_noise,sigma,algorithm,M,"
-              "relative_l2_error,postprocessing_ms,data_generation_ms\n";
+              "relative_l2_error,fit_ms,evaluation_256_ms,"
+              "total_postprocessing_256_ms,data_generation_ms\n";
     output << std::setprecision(17);
     for (const Result& result : results) {
         output << 20260727 << ','
@@ -691,7 +826,10 @@ void write_results(const std::vector<Result>& results,
                << algorithm_name(result.algorithm) << ','
                << result.sample_count << ','
                << result.relative_l2_error << ','
-               << result.postprocessing_milliseconds << ','
+               << result.fit_milliseconds << ','
+               << result.evaluation_256_milliseconds << ','
+               << result.fit_milliseconds +
+                      result.evaluation_256_milliseconds << ','
                << result.data_generation_milliseconds << '\n';
     }
 }
@@ -702,7 +840,8 @@ void print_results(const std::vector<Result>& results) {
               << std::setw(6) << "M"
               << std::setw(19) << "algorithm"
               << std::setw(18) << "relative error"
-              << std::setw(18) << "postprocess [ms]"
+              << std::setw(15) << "fit [ms]"
+              << std::setw(18) << "eval 256 [ms]"
               << "data gen [ms]\n"
               << std::setprecision(8);
     for (const Result& result : results) {
@@ -711,7 +850,8 @@ void print_results(const std::vector<Result>& results) {
                   << std::setw(6) << result.sample_count
                   << std::setw(19) << algorithm_name(result.algorithm)
                   << std::setw(18) << result.relative_l2_error
-                  << std::setw(18) << result.postprocessing_milliseconds
+                  << std::setw(15) << result.fit_milliseconds
+                  << std::setw(18) << result.evaluation_256_milliseconds
                   << result.data_generation_milliseconds << '\n';
     }
 }

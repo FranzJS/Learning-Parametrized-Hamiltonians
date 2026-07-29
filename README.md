@@ -163,43 +163,97 @@ r=\sqrt{\frac{\mathbb E\lVert N\rVert_F^2}{\lVert U\rVert_F^2}}
 \qquad \sigma=\frac r{\sqrt{16}}=\frac r4.
 $$
 
+The four-qubit executable adds a third, **unitary-curve** learner. Starting
+from the sample-wise polar factors
+$Q_j=\mathcal P_{U(16)}(\widetilde U(t_j))$, it constructs their ordinary
+matrix-valued Chebyshev interpolant $P_M(t)$ and defines
+
+$$
+\widehat U_{\rm curve}(t)=\mathcal P_{U(16)}(P_M(t)).
+$$
+
+Thus the fitted curve is unitary at every point where $P_M(t)$ is
+nonsingular. It still interpolates the $Q_j$ exactly, and at every
+intermediate time it is the unique Frobenius-nearest unitary to the
+unconstrained continuation $P_M(t)$. This is a pointwise orthogonal-projection
+best fit, not a global nonlinear least-squares optimization over all unitary
+paths.
+
+The derivative is analytic. The implementation differentiates the polar
+Newton iteration by evolving $X_0=P_M$, $Y_0=\dot P_M$ according to
+
+$$
+\begin{aligned}
+X_{k+1}&=\frac12\left(X_k+X_k^{-\dagger}\right),\\
+Y_{k+1}&=\frac12\left(
+Y_k-X_k^{-\dagger}Y_k^\dagger X_k^{-\dagger}
+\right).
+\end{aligned}
+$$
+
+At convergence, $X_k=\widehat U_{\rm curve}$ and
+$Y_k=\dot{\widehat U}_{\rm curve}$. The estimate is therefore
+
+$$
+\widehat H_{\rm curve}(t)=
+\Pi_{\rm Herm,0}\!\left(
+iY_kX_k^\dagger
+\right).
+$$
+
+No finite-difference step or additional fitted hyperparameter is used.
+
 Accuracy for seed `20260727`; each entry is
-unconstrained / polar-projected:
+unconstrained / sample-polar / unitary-curve:
 
 | Relative noise | $M=3$ | $M=5$ | $M=8$ | $M=12$ | $M=16$ |
 |---:|---:|---:|---:|---:|---:|
-| 0.5% | .48909 / .48932 | .21093 / .21068 | .03141 / .03122 | .03183 / .03123 | .04315 / .04242 |
-| 1% | .48891 / .48935 | .21184 / .21125 | .04503 / .04420 | .06360 / .06237 | .08630 / .08483 |
-| 2% | .48874 / .48953 | .21520 / .21366 | .07859 / .07638 | .12719 / .12463 | .17261 / .16959 |
-| 3% | .48882 / .48988 | .22052 / .21773 | .11436 / .11080 | .19082 / .18683 | .25897 / .25429 |
+| 0.5% | .48909 / .48932 / .50054 | .21093 / .21068 / .20925 | .03141 / .03122 / .03088 | .03183 / .03123 / .03138 | .04315 / .04242 / .04255 |
+| 1% | .48891 / .48935 / .50091 | .21184 / .21125 / .20969 | .04503 / .04420 / .04421 | .06360 / .06237 / .06268 | .08630 / .08483 / .08509 |
+| 2% | .48874 / .48953 / .50183 | .21520 / .21366 / .21196 | .07859 / .07638 / .07702 | .12719 / .12463 / .12527 | .17261 / .16959 / .17012 |
+| 3% | .48882 / .48988 / .50300 | .22052 / .21773 / .21600 | .11436 / .11080 / .11202 | .19082 / .18683 / .18781 | .25897 / .25429 / .25508 |
 
-Intrinsic post-processing runtime in microseconds; each entry is
-unconstrained / polar-projected:
+Median learner-construction runtime across the four noise rates:
 
-| Relative noise | $M=3$ | $M=5$ | $M=8$ | $M=12$ | $M=16$ |
-|---:|---:|---:|---:|---:|---:|
-| 0.5% | 6.31 / 179.88 | 14.58 / 305.18 | 33.76 / 504.38 | 69.37 / 784.56 | 120.09 / 1079.98 |
-| 1% | 6.31 / 179.93 | 14.62 / 305.13 | 33.83 / 504.55 | 69.43 / 783.77 | 120.60 / 1090.73 |
-| 2% | 6.31 / 179.99 | 14.60 / 305.21 | 33.49 / 503.60 | 69.19 / 783.98 | 120.22 / 1079.01 |
-| 3% | 6.31 / 223.35 | 14.59 / 350.00 | 33.82 / 577.01 | 69.10 / 870.70 | 119.72 / 1223.79 |
+| $M$ | Unconstrained [$\mu$s] | Sample-polar [$\mu$s] | Unitary-curve [$\mu$s] |
+|---:|---:|---:|---:|
+| 3 | 6.451 | 183.367 | 182.479 |
+| 5 | 15.473 | 307.959 | 309.832 |
+| 8 | 34.983 | 505.621 | 506.193 |
+| 12 | 73.846 | 788.127 | 791.876 |
+| 16 | 126.667 | 1142.956 | 1141.486 |
+
+Median runtime to reconstruct $\widehat H$ at all 256 error-quadrature nodes:
+
+| $M$ | Unconstrained [ms] | Sample-polar [ms] | Unitary-curve [ms] |
+|---:|---:|---:|---:|
+| 3 | 2.461 | 2.428 | 47.215 |
+| 5 | 2.931 | 2.781 | 41.503 |
+| 8 | 3.478 | 3.629 | 34.247 |
+| 12 | 4.525 | 4.185 | 35.413 |
+| 16 | 5.139 | 5.199 | 36.334 |
 
 Synthetic data generation includes RK4 evolution to all query times and
-addition of the Gaussian noise. It is shared by both algorithms and does not
-depend materially on the noise rate:
+addition of the Gaussian noise. It is shared by all three algorithms and does
+not depend materially on the noise rate:
 
 | $M$ | Data generation [ms] |
 |---:|---:|
-| 3 | 147.85 |
-| 5 | 151.10 |
-| 8 | 156.74 |
-| 12 | 157.47 |
-| 16 | 156.56 |
+| 3 | 158.88 |
+| 5 | 166.53 |
+| 8 | 166.98 |
+| 12 | 172.29 |
+| 16 | 163.94 |
 
-The post-processing time excludes reconstruction on the quadrature nodes used
-only to evaluate the error. The data-generation implementation exploits the
-sparse Pauli form of $H_4(t)$; its absolute runtime is machine-dependent.
-Halving the RK4 step from $2\cdot10^{-4}$ to $10^{-4}$ changes every reported
-error by at most $1.34\cdot10^{-14}$.
+The CSV records construction, 256-node evaluation, and their sum separately.
+The 256-node cost is an evaluation-protocol choice rather than an intrinsic
+fit cost, but it is important for the unitary-curve learner because polar
+projection and its derivative are evaluated on demand. The data-generation
+implementation exploits the sparse Pauli form of $H_4(t)$; all absolute
+runtimes are machine-dependent. Halving the RK4 step from $2\cdot10^{-4}$ to
+$10^{-4}$ changes every reported error by at most $1.6\cdot10^{-14}$.
+All fitted curves passed unitarity and tangent-space checks on a uniform
+1,025-point validation grid.
 
 ## Build and run
 
